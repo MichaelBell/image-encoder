@@ -1,3 +1,4 @@
+from operator import itemgetter
 import sys
 import struct
 from PIL import Image
@@ -18,6 +19,16 @@ out_file = open(fname + ".dat", "wb")
 bbox = bmp.getbbox()
 data = bmp.getdata()
 bands = [data.getband(i) for i in range(num_bands)]
+
+
+def add_to_frequency(freq, data):
+    for d in data:
+        if (d >> 30) == 3: f = freq[0]
+        else: f = freq[1]
+        for i in range(0,21,10):
+            s = (d >> i) & 0x3ff
+            if s not in f: f[s] = 1
+            else: f[s] += 1
 
 def decode_and_compare(data, source, tolerance):
     decoded = []
@@ -242,21 +253,26 @@ def encode_band(band, offset, tolerance):
         decode_and_compare(data, source_data, tolerance)
         return data
 
+frequency = [[{},{}],[{},{}],[{},{}]]
+
 for y in range(bbox[3]):
     data = []
     tolerance = [0,0,0]
     for b in range(num_bands):
         data.append(encode_band(bands[b], y*bbox[2], 0))
     #print("%d %d %d" % (len(data[0]), len(data[1]), len(data[2])))
-    while sum([len(d) for d in data]) > 210:
+    while sum([len(d) for d in data]) > 260:
         index_max = max(range(num_bands), key=[len(data[i]) - 100*tolerance[i] for i in range(num_bands)].__getitem__)
         tolerance[index_max] += 1
         data[index_max] = encode_band(bands[index_max], y*bbox[2], tolerance[index_max])
     print("%d  %d(%d) %d(%d) %d(%d)" % (y,len(data[0]), tolerance[0], len(data[1]), tolerance[1], len(data[2]), tolerance[2]))
     len_cmd = len(data[0])
+    add_to_frequency(frequency[0], data[0])
     if num_bands == 3:
         len_cmd += len(data[1]) << 10
         len_cmd += len(data[2]) << 20
+        add_to_frequency(frequency[1], data[1])
+        add_to_frequency(frequency[2], data[2])
     else:
         len_cmd +=  0x80000000
     out_file.write(struct.pack('<I', len_cmd))
@@ -264,4 +280,40 @@ for y in range(bbox[3]):
         for cmd in data[b]:
             out_file.write(struct.pack('<I', cmd))
 
+for b in range(num_bands):
+    for i in range(2):
+        print("%s %s frequency distribution:" % (("Red", "Green", "Blue")[b], ("pixel","rle")[i]))
+        sorted_freq = sorted(frequency[b][i].values(), reverse=True)
+        uncompressed_size = sum(sorted_freq) * 10
+        print("Uncompressed size: %d" % uncompressed_size)
+        for i in range(4,8):
+            compress_n = 1 << i
+            compress_size = i + 1
+            other_size = 11
+            total_size = 0
+            for j in range(len(sorted_freq)):
+                if j < compress_n: total_size += compress_size * sorted_freq[j]
+                else: total_size += other_size * sorted_freq[j]
+            print("Compress first %d: %d (%.2f%%)" % (compress_n, total_size, 100.0 * (total_size / uncompressed_size)))
+            total_size = 0
+            for j in range(len(sorted_freq)):
+                if j < compress_n: total_size += compress_size * sorted_freq[j]
+                elif j < 511 + compress_n: total_size += 10 * sorted_freq[j]
+                else: total_size += 20 * sorted_freq[j]
+            print("Compress scheme 1 (%s): %d (%.2f%%)" % ("OK" if len(sorted_freq) < 511 + compress_size else "No", total_size, 100.0 * (total_size / uncompressed_size)))
+            total_size = 0
+            for j in range(len(sorted_freq)):
+                if j < compress_n: total_size += compress_size * sorted_freq[j]
+                elif j < 255 + compress_n: total_size += 9 * sorted_freq[j]
+                else: total_size += 19 * sorted_freq[j]
+            print("Compress scheme 2 (%s): %d (%.2f%%)" % ("OK" if len(sorted_freq) < 255 + compress_size else "No", total_size, 100.0 * (total_size / uncompressed_size)))
+
+
+        total_size = 0
+        for j in range(len(sorted_freq)):
+            if j < 16: total_size += 6 * sorted_freq[j]
+            elif j < 16 + 64: total_size += 8 * sorted_freq[j]
+            else: total_size += 11 * sorted_freq[j]
+        print("Compress scheme n: %d (%.2f%%)" % (total_size, 100.0 * (total_size / uncompressed_size)))
+    
 
