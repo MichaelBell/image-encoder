@@ -134,8 +134,12 @@ def encode_band(band, offset, tolerance):
         global cmd, run_length, pixel_value, idx, fill_cmd, cmd_idx
         reset()
         data = []
+        pixel_avg = -256
+        pixel_min = -256
+        pixel_max = -256
         for x in range(0,bbox[2]):
             pixel = band[y*bbox[2]+x] >> 3
+            this_tolerance = max(tolerance - run_length[idx] // 6, 0)
             if fill_cmd:
                 cmd <<= 5
                 cmd += pixel
@@ -144,14 +148,17 @@ def encode_band(band, offset, tolerance):
                     cmd += 0xC0000000
                     data.append(cmd)
                     reset()
-            elif run_length[idx] < 33 and abs(pixel_value[idx] - pixel) <= tolerance:
+            elif run_length[idx] < 33 and max(pixel_max, pixel) - min(pixel_min, pixel) <= this_tolerance:
+                pixel_avg = (pixel_avg * run_length[idx] + pixel) / (run_length[idx] + 1)
+                pixel_min = min(pixel_min, pixel)
+                pixel_max = max(pixel_max, pixel)
                 run_length[idx] += 1
             else: 
                 if run_length[idx] == 0:
-                    pixel_value[idx] = pixel
                     run_length[idx] = 1
+                    pixel_avg = pixel_min = pixel_max = pixel
                 elif run_length[idx] == 1:
-                    last_pixel = pixel_value[idx]
+                    last_pixel = int(pixel_avg)
                     handle_partial_run(data)
 
                     fill_cmd = True
@@ -162,7 +169,7 @@ def encode_band(band, offset, tolerance):
                         cmd += 0xC0000000
                         data.append(cmd)
                         reset()
-                        pixel_value[idx] = pixel
+                        pixel_avg = pixel_min = pixel_max = pixel
                         run_length[idx] = 1
                     else:
                         cmd <<= 5
@@ -173,6 +180,7 @@ def encode_band(band, offset, tolerance):
                             data.append(cmd)
                             reset()
                 else:
+                    pixel_value[idx] = int(pixel_avg)
                     idx += 1
                     if idx == 3:
                         assert(pixel_value[0] >= 0)
@@ -190,11 +198,12 @@ def encode_band(band, offset, tolerance):
                         cmd += 0x40000000
                         data.append(cmd)
                         reset()
-                    pixel_value[idx] = pixel
+                    pixel_avg = pixel_min = pixel_max = pixel
                     run_length[idx] = 1
         if not fill_cmd:
             if run_length[idx] != 1:
                 if run_length[idx] > 1:
+                    pixel_value[idx] = int(pixel_avg)
                     idx += 1
                 if idx == 3:
                     cmd = pixel_value[0] << 25
@@ -210,7 +219,7 @@ def encode_band(band, offset, tolerance):
                     handle_partial_run(data)
                     if cmd_idx != 0: fill_cmd = True
             else:
-                last_pixel = pixel_value[idx]
+                last_pixel = int(pixel_avg)
                 handle_partial_run(data)
                 fill_cmd = True
                 cmd <<= 5
@@ -238,12 +247,12 @@ for y in range(bbox[3]):
     tolerance = [0,0,0]
     for b in range(num_bands):
         data.append(encode_band(bands[b], y*bbox[2], 0))
-    print("%d %d %d" % (len(data[0]), len(data[1]), len(data[2])))
-    while sum([len(d) for d in data]) > 220:
+    #print("%d %d %d" % (len(data[0]), len(data[1]), len(data[2])))
+    while sum([len(d) for d in data]) > 210:
         index_max = max(range(num_bands), key=[len(data[i]) - 100*tolerance[i] for i in range(num_bands)].__getitem__)
         tolerance[index_max] += 1
         data[index_max] = encode_band(bands[index_max], y*bbox[2], tolerance[index_max])
-        print("  %d(%d) %d(%d) %d(%d)" % (len(data[0]), tolerance[0], len(data[1]), tolerance[1], len(data[2]), tolerance[2]))
+    print("%d  %d(%d) %d(%d) %d(%d)" % (y,len(data[0]), tolerance[0], len(data[1]), tolerance[1], len(data[2]), tolerance[2]))
     len_cmd = len(data[0])
     if num_bands == 3:
         len_cmd += len(data[1]) << 10
