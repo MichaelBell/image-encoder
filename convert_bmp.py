@@ -280,7 +280,10 @@ for y in range(bbox[3]):
         for cmd in data[b]:
             out_file.write(struct.pack('<I', cmd))
 
-for b in range(num_bands):
+out_file.close()
+
+if False:
+  for b in range(num_bands):
     for i in range(2):
         print("%s %s frequency distribution:" % (("Red", "Green", "Blue")[b], ("pixel","rle")[i]))
         sorted_freq = sorted(frequency[b][i].values(), reverse=True)
@@ -316,4 +319,105 @@ for b in range(num_bands):
             else: total_size += 11 * sorted_freq[j]
         print("Compress scheme n: %d (%.2f%%)" % (total_size, 100.0 * (total_size / uncompressed_size)))
     
+
+in_file = open(fname + ".dat", "rb")
+out_file = open(fname + ".huf", "wb")
+out_bits = 0
+out_bit_len = 0
+bytes_written = 0
+
+def read_word():
+    global in_file
+    return struct.unpack("<I", in_file.read(4))[0]
+
+def add_bits(bits, bit_len):
+    global out_bits, out_bit_len
+    assert(bits.bit_length() <= bit_len)
+    out_bits <<= bit_len
+    out_bits |= bits
+    out_bit_len += bit_len
+
+def write_bits(align):
+    global out_bits, out_bit_len, out_file, bytes_written
+    while out_bit_len >= 8:
+        out_bit_len -= 8
+        out_byte = out_bits >> out_bit_len
+        out_bits &= (1 << (out_bit_len)) - 1
+        out_file.write(struct.pack("=B", out_byte))
+        bytes_written += 1
+    if align and out_bit_len > 0:
+        out_bits <<= 8 - out_bit_len
+        out_file.write(struct.pack("=B", out_bits))
+        out_bit_len = 0
+        out_bits = 0
+        bytes_written += 1
+
+pixel_table = [[], [], []]
+rle_table = [[], [], []]
+for b in range(num_bands):
+    pixel_table[b] = [f[0] for f in sorted(frequency[b][0].items(), key=itemgetter(1), reverse=True)[:64]]
+    rle_table[b] = [f[0] for f in sorted(frequency[b][1].items(), key=itemgetter(1), reverse=True)[:64]]
+
+    out_bits = 0
+    out_bit_len = 0
+    for i in range(64):
+        add_bits(pixel_table[b][i], 10)
+    for i in range(64):
+        add_bits(rle_table[b][i], 10)
+    write_bits(True)
+
+while True:
+    try:
+        lens = read_word()
+    except struct.error:
+        break
+    bytes_written = 0
+    out_bits = 0
+    out_bit_len = 0
+    start_band_bit_len = 0
+    start_band_remaining_bits = 0
+
+    for b in range(num_bands):
+        shift = 10 * b
+        band_len = (lens >> shift) & 0x3ff
+
+        for i in range(band_len):
+            cmd = read_word()
+            if cmd & 0x80000000:
+                # Raw pixels
+                add_bits(1, 1)
+
+                for shift in range(20,-1,-10):
+                    two_pixels = (cmd >> shift) & 0x3ff
+                    try:
+                        symbol = pixel_table[b].index(two_pixels)
+                        add_bits(symbol, 1 + 6)
+                    except ValueError:
+                        add_bits((1 << 10) | two_pixels, 11)
+
+            else:
+                # RLE
+                add_bits(0, 1)
+
+                for shift in range(20,-1,-10):
+                    rle = (cmd >> shift) & 0x3ff
+                    try:
+                        symbol = rle_table[b].index(rle)
+                        add_bits(symbol, 1 + 6)
+                    except ValueError:
+                        add_bits((1 << 10) | rle, 11)
+
+        assert(out_bit_len.bit_length() <= 13)
+        out_bits |= ((start_band_remaining_bits << 13) | out_bit_len) << out_bit_len
+        out_bit_len += 13 + start_band_bit_len
+        write_bits(b == num_bands - 1)
+        start_band_bit_len = out_bit_len
+        start_band_remaining_bits = out_bits
+        out_bits = 0
+        out_bit_len = 0
+
+    # Word align
+    if (bytes_written & 3) != 0:
+        for i in range(bytes_written & 3,4):
+            out_file.write(struct.pack('=B', 0))
 
