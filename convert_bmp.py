@@ -261,7 +261,7 @@ for y in range(bbox[3]):
     for b in range(num_bands):
         data.append(encode_band(bands[b], y*bbox[2], 0))
     #print("%d %d %d" % (len(data[0]), len(data[1]), len(data[2])))
-    while sum([len(d) for d in data]) > 260:
+    while sum([len(d) for d in data]) > 250:
         index_max = max(range(num_bands), key=[len(data[i]) - 100*tolerance[i] for i in range(num_bands)].__getitem__)
         tolerance[index_max] += 1
         data[index_max] = encode_band(bands[index_max], y*bbox[2], tolerance[index_max])
