@@ -387,25 +387,43 @@ while True:
                 # Raw pixels
                 add_bits(1, 1)
 
+                can_compress = (i != band_len - 1)
                 for shift in range(20,-1,-10):
                     two_pixels = (cmd >> shift) & 0x3ff
-                    try:
+                    if two_pixels not in pixel_table[b]: 
+                        can_compress = False
+                        break
+                
+                if can_compress:
+                    add_bits(0, 1)
+                    for shift in range(20,-1,-10):
+                        two_pixels = (cmd >> shift) & 0x3ff
                         symbol = pixel_table[b].index(two_pixels)
-                        add_bits(symbol, 1 + 6)
-                    except ValueError:
-                        add_bits((1 << 10) | two_pixels, 11)
+                        add_bits(symbol, 6)
+                else:
+                    add_bits(1, 1)
+                    add_bits(cmd & 0x3FFFFFFF, 30)
 
             else:
                 # RLE
                 add_bits(0, 1)
 
+                can_compress = (i != band_len - 1)
                 for shift in range(20,-1,-10):
                     rle = (cmd >> shift) & 0x3ff
-                    try:
+                    if rle not in rle_table[b]: 
+                        can_compress = False
+                        break
+                
+                if can_compress:
+                    add_bits(0, 1)
+                    for shift in range(20,-1,-10):
+                        rle = (cmd >> shift) & 0x3ff
                         symbol = rle_table[b].index(rle)
-                        add_bits(symbol, 1 + 6)
-                    except ValueError:
-                        add_bits((1 << 10) | rle, 11)
+                        add_bits(symbol, 6)
+                else:
+                    add_bits(1, 1)
+                    add_bits(cmd & 0x3FFFFFFF, 30)
 
         assert(out_bit_len.bit_length() <= 13)
         out_bits |= ((start_band_remaining_bits << 13) | out_bit_len) << out_bit_len

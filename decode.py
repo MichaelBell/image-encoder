@@ -46,20 +46,19 @@ class Decoder:
             total_bits += 13 + self.band_len
             cmds = 0
             while self.band_len > 0:
-                cmd_type = self.get_bits(1)
-                if cmd_type == 1:
-                    cmd = 0xC0000000
-                    table = self.pixel_table[b]
+                cmd_type = self.get_bits(2)
+                if cmd_type & 1:
+                    cmd = (cmd_type << 30) | self.get_bits(30)
                 else:
-                    cmd = 0x40000000
-                    table = self.rle_table[b]
-
-                for i in range(3):
-                    shift = 20 - (i * 10)
-                    symbol_type = self.get_bits(1)
-                    if symbol_type == 1:
-                        cmd |= self.get_bits(10) << shift
+                    if cmd_type == 2:
+                        cmd = 0xC0000000
+                        table = self.pixel_table[b]
                     else:
+                        cmd = 0x40000000
+                        table = self.rle_table[b]
+
+                    for i in range(3):
+                        shift = 20 - (i * 10)
                         cmd |= table[self.get_bits(6)] << shift
                 cmd_list.append(cmd)
                 cmds += 1
