@@ -16,10 +16,23 @@ bmp = Image.open(fname + ".bmp")
 
 out_file = open(fname + ".dat", "wb")
 
-bbox = bmp.getbbox()
+line_len = bmp.size[0]
+if bmp.getbbox() is not None:
+    bbox = (bmp.getbbox()[0], 0, bmp.getbbox()[2], bmp.size[1])
+else:
+    bbox = (0, 0, 0, bmp.size[1])
+if bbox[2] - bbox[0] < 6: bbox = (bbox[0], 0, bbox[0] + 6, bmp.size[1])
+print(bbox)
 data = bmp.getdata()
 bands = [data.getband(i) for i in range(num_bands)]
 
+dither = (0, 4, 1, 5, 
+          6, 2, 7, 3,
+          1, 5, 0, 4,
+          7, 3, 6, 2)
+
+def add_dither(x, y, pixel):
+    return min(pixel + dither[(x & 3) + 4*(y & 3)], 255)
 
 def add_to_frequency(freq, data):
     for d in data:
@@ -55,7 +68,8 @@ def decode_and_compare(data, source, tolerance):
     fail_idx = 0
     for i in range(len(decoded)):
         if i < len(source):
-            if abs(decoded[i] - (source[i] >> 3)) > tolerance:
+            source_pixel = add_dither(i, y, source[i])
+            if abs(decoded[i] - (source_pixel >> 3)) > tolerance:
                 match = False
                 fail_idx = i
                 break
@@ -149,8 +163,9 @@ def encode_band(band, offset, tolerance):
         pixel_min = -256
         pixel_max = -256
         for x in range(0,bbox[2]):
-            pixel = band[y*bbox[2]+x] >> 3
-            this_tolerance = max(tolerance - run_length[idx] // 6, 0)
+            if x < bbox[0]: pixel = 0
+            else: pixel = add_dither(x, y, band[offset + x]) >> 3
+            this_tolerance = max(tolerance - run_length[idx] // 6, 1)
             if fill_cmd:
                 cmd <<= 5
                 cmd += pixel
@@ -248,7 +263,8 @@ def encode_band(band, offset, tolerance):
 
         source_data = []
         for i in range(bbox[2]):
-            source_data.append(band[offset+i])
+            if i < bbox[0]: source_data.append(0)
+            else: source_data.append(band[offset + i])
 
         decode_and_compare(data, source_data, tolerance)
         return data
@@ -257,15 +273,15 @@ frequency = [[{},{}],[{},{}],[{},{}]]
 
 for y in range(bbox[3]):
     data = []
-    tolerance = [0,0,0]
+    tolerance = [1,1,1]
     for b in range(num_bands):
-        data.append(encode_band(bands[b], y*bbox[2], 0))
+        data.append(encode_band(bands[b], y*line_len, tolerance[b]))
     #print("%d %d %d" % (len(data[0]), len(data[1]), len(data[2])))
-    while sum([len(d) for d in data]) > 250:
+    while sum([len(d) for d in data]) > 135:
         index_max = max(range(num_bands), key=[len(data[i]) - 100*tolerance[i] for i in range(num_bands)].__getitem__)
         tolerance[index_max] += 1
-        data[index_max] = encode_band(bands[index_max], y*bbox[2], tolerance[index_max])
-    print("%d  %d(%d) %d(%d) %d(%d)" % (y,len(data[0]), tolerance[0], len(data[1]), tolerance[1], len(data[2]), tolerance[2]))
+        data[index_max] = encode_band(bands[index_max], y*line_len, tolerance[index_max])
+    print("%s: %d  %d(%d) %d(%d) %d(%d)" % (fname, y,len(data[0]), tolerance[0], len(data[1]), tolerance[1], len(data[2]), tolerance[2]))
     len_cmd = len(data[0])
     add_to_frequency(frequency[0], data[0])
     if num_bands == 3:
@@ -325,6 +341,7 @@ out_file = open(fname + ".huf", "wb")
 out_bits = 0
 out_bit_len = 0
 bytes_written = 0
+disable_compression = False
 
 def read_word():
     global in_file
@@ -361,9 +378,15 @@ for b in range(num_bands):
     out_bits = 0
     out_bit_len = 0
     for i in range(64):
-        add_bits(pixel_table[b][i], 10)
+        try:
+            add_bits(pixel_table[b][i], 10)
+        except IndexError:
+            add_bits(0, 10)
     for i in range(64):
-        add_bits(rle_table[b][i], 10)
+        try:
+            add_bits(rle_table[b][i], 10)
+        except IndexError:
+            add_bits(0, 10)
     write_bits(True)
 
 while True:
@@ -387,7 +410,7 @@ while True:
                 # Raw pixels
                 add_bits(1, 1)
 
-                can_compress = (i != band_len - 1)
+                can_compress = (i != band_len - 1) and not disable_compression
                 for shift in range(20,-1,-10):
                     two_pixels = (cmd >> shift) & 0x3ff
                     if two_pixels not in pixel_table[b]: 
@@ -408,7 +431,7 @@ while True:
                 # RLE
                 add_bits(0, 1)
 
-                can_compress = (i != band_len - 1)
+                can_compress = (i != band_len - 1) and not disable_compression
                 for shift in range(20,-1,-10):
                     rle = (cmd >> shift) & 0x3ff
                     if rle not in rle_table[b]: 
