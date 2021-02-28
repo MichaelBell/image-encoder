@@ -159,16 +159,16 @@ def encode_band(band, offset, tolerance):
         global cmd, run_length, pixel_value, idx, fill_cmd, cmd_idx
         reset()
         data = []
-        pixel_avg = -256
-        pixel_min = -256
-        pixel_max = -256
+        pixel_avg = -512
+        pixel_min = -512
+        pixel_max = -512
         for x in range(0,bbox[2]):
             if x < bbox[0]: pixel = 0
-            else: pixel = add_dither(x, y, band[offset + x]) >> 3
-            this_tolerance = max(tolerance - run_length[idx] // 6, 1)
+            else: pixel = add_dither(x, y, band[offset + x])
+            this_tolerance = max(tolerance * 8 - run_length[idx], 8)
             if fill_cmd:
                 cmd <<= 5
-                cmd += pixel
+                cmd += pixel >> 3
                 cmd_idx += 1
                 if cmd_idx == 6:
                     cmd += 0xC0000000
@@ -184,7 +184,7 @@ def encode_band(band, offset, tolerance):
                     run_length[idx] = 1
                     pixel_avg = pixel_min = pixel_max = pixel
                 elif run_length[idx] == 1:
-                    last_pixel = int(pixel_avg)
+                    last_pixel = int(pixel_avg) >> 3
                     handle_partial_run(data)
 
                     fill_cmd = True
@@ -199,14 +199,14 @@ def encode_band(band, offset, tolerance):
                         run_length[idx] = 1
                     else:
                         cmd <<= 5
-                        cmd += pixel
+                        cmd += pixel >> 3
                         cmd_idx += 1
                         if cmd_idx == 6:
                             cmd += 0xC0000000
                             data.append(cmd)
                             reset()
                 else:
-                    pixel_value[idx] = int(pixel_avg)
+                    pixel_value[idx] = int(pixel_avg) >> 3
                     idx += 1
                     if idx == 3:
                         assert(pixel_value[0] >= 0)
@@ -229,7 +229,7 @@ def encode_band(band, offset, tolerance):
         if not fill_cmd:
             if run_length[idx] != 1:
                 if run_length[idx] > 1:
-                    pixel_value[idx] = int(pixel_avg)
+                    pixel_value[idx] = int(pixel_avg) >> 3
                     idx += 1
                 if idx == 3:
                     cmd = pixel_value[0] << 25
@@ -245,7 +245,7 @@ def encode_band(band, offset, tolerance):
                     handle_partial_run(data)
                     if cmd_idx != 0: fill_cmd = True
             else:
-                last_pixel = int(pixel_avg)
+                last_pixel = int(pixel_avg) >> 3
                 handle_partial_run(data)
                 fill_cmd = True
                 cmd <<= 5
