@@ -32,7 +32,7 @@ dither = (0, 4, 1, 5,
           7, 3, 6, 2)
 
 def add_dither(x, y, pixel):
-    return min(pixel + dither[(x & 3) + 4*(y & 3)], 255)
+    return max(pixel - dither[(x & 3) + 4*(y & 3)], 0)
 
 def add_to_frequency(freq, data):
     for d in data:
@@ -266,7 +266,7 @@ def encode_band(band, offset, tolerance):
             if i < bbox[0]: source_data.append(0)
             else: source_data.append(band[offset + i])
 
-        decode_and_compare(data, source_data, tolerance)
+        #decode_and_compare(data, source_data, tolerance)
         return data
 
 frequency = [[{},{}],[{},{}],[{},{}]]
@@ -277,7 +277,7 @@ for y in range(bbox[3]):
     for b in range(num_bands):
         data.append(encode_band(bands[b], y*line_len, tolerance[b]))
     #print("%d %d %d" % (len(data[0]), len(data[1]), len(data[2])))
-    while sum([len(d) for d in data]) > 135:
+    while sum([len(d) for d in data]) > 160:
         index_max = max(range(num_bands), key=[len(data[i]) - 100*tolerance[i] for i in range(num_bands)].__getitem__)
         tolerance[index_max] += 1
         data[index_max] = encode_band(bands[index_max], y*line_len, tolerance[index_max])
